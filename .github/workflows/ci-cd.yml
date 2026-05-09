@@ -1,0 +1,78 @@
+name: CI/CD
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
+
+permissions:
+  contents: write
+
+jobs:
+  train-and-release:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.9"
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Check whether training data changed
+        id: data_changes
+        run: |
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            changed_files="$(git diff --name-only origin/${{ github.base_ref }}...HEAD)"
+          elif [ "${{ github.event.before }}" = "0000000000000000000000000000000000000000" ]; then
+            changed_files="$(git ls-tree --name-only -r HEAD)"
+          else
+            changed_files="$(git diff --name-only ${{ github.event.before }} ${{ github.sha }})"
+          fi
+
+          if echo "$changed_files" | grep -q '^training_data.csv$'; then
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Train model
+        if: steps.data_changes.outputs.changed == 'true'
+        run: python train_model.py
+
+      - name: Commit model metadata
+        if: steps.data_changes.outputs.changed == 'true' && github.event_name == 'push'
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add linear_model.txt
+          git commit -m "Update linear model metadata" || echo "No changes to commit"
+
+      - name: Push model metadata to release branch
+        if: steps.data_changes.outputs.changed == 'true' && github.event_name == 'push'
+        run: |
+          cp linear_model.txt /tmp/linear_model.txt
+          git switch --orphan release
+          git rm -rf .
+          cp /tmp/linear_model.txt linear_model.txt
+          git add linear_model.txt
+          git commit -m "Update release model metadata" || echo "No changes to commit"
+          git push --force origin release
+
+      - name: Create GitHub Release
+        if: steps.data_changes.outputs.changed == 'true' && github.event_name == 'push'
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v${{ github.run_number }}
+          name: Release v${{ github.run_number }}
+          files: linear_model.txt
