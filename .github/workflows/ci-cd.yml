@@ -63,7 +63,7 @@ jobs:
         run: |
           cp linear_model.txt /tmp/linear_model.txt
           git switch --orphan release
-          git rm -rf .
+          git rm -r --ignore-unmatch .
           cp /tmp/linear_model.txt linear_model.txt
           git add linear_model.txt
           git commit -m "Update release model metadata" || echo "No changes to commit"
